@@ -1,0 +1,22 @@
+{
+  "trusted_bootstrap_peers": {
+    "SO24a387597d2c7fdc79a2fba590ee0a73e655746bc8392c1520578ce8e2ba0e9aK": {
+      "last_known_address": "http://192.168.1.219:5000"
+    },
+    "SO319c6b742e475942499594bc34d4f5b6431e35584d60417eef6ab3518627087bK": {
+      "last_known_address": "http://192.168.1.168:5000"
+    },
+    "SOac0da44f241f2013b1de4abf637b30b1eb8e5c114f6ecfb72e14160d7ac3dc81K": {
+      "last_known_address": "http://192.168.1.19:5000"
+    },
+    "SO7ee73564fd442c58e139dfea2105108b699f6fd609b7c8077793b036daca812bK": {
+      "last_known_address": "http://192.168.1.20:5000"
+    },
+    "SO315b911b6a086fb6aa8c46c142d25e784fe1aa80c86509f445f466f3a6555f4fK": {
+      "last_known_address": "http://192.168.1.25:5000"
+    },
+    "SO1ef128efcce2f9c5e71c23fe26b3ddf28d668c0d16e26147f30d0d4a3e0886b9K": {
+      "last_known_address": "http://192.168.1.168:5000"
+    }
+  }
+}

@@ -1,0 +1,260 @@
+<!-- NỘI DUNG CỦA FILE templates/faucet.html -->
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hồ Ước Nguyện - ΣOK Chain</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root { --primary-accent: #6f42c1; }
+        body { background-color: #f0f2f5; font-family: 'Poppins', sans-serif; }
+        .wallet-card { background-color: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.07); padding: 2rem; border: 1px solid #e9ecef; }
+        .wallet-info { word-break: break-all; font-family: 'Courier New', Courier, monospace; font-size: 0.9em; background-color: #f8f9fa; padding: 12px; border-radius: 10px; border: 1px solid #e9ecef; }
+        .btn { border-radius: 12px; font-weight: 500; transition: all 0.2s ease-in-out; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white mb-5 shadow-sm">
+        <div class="container">
+            <a class="navbar-brand" href="/"><strong>ΣOK</strong> Chain</a>
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-arrow-left-circle me-1"></i>Về Bảng điều khiển chính</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="text-center mb-4">
+            <h1><i class="bi bi-droplet-half text-primary"></i> Hồ Ước Nguyện</h1>
+            <p class="lead text-muted">Mỗi ngày một lần, hãy thả đồng xu và nhận một chút may mắn từ Sokchain.</p>
+        </div>
+        <div class="row justify-content-center">
+            <div class="col-lg-6">
+                <div class="wallet-card text-center" id="faucet-wallet-container">
+                    <!-- Giao diện ví sẽ được render ở đây -->
+                </div>
+                <div class="card mt-4" id="faucet-main-card" style="display:none;">
+                    <div class="card-body text-center p-4">
+                        <h5 class="card-title">Phần thưởng hôm nay</h5>
+                        <p class="display-4 fw-bold text-success" id="faucet-reward-amount">... SOK</p>
+                        <button class="btn btn-primary btn-lg w-100" id="claim-faucet-btn" data-action="claim-faucet">
+                            <span class="spinner-border spinner-border-sm" role="status" style="display: none;"></span>
+                            <span class="btn-text"><i class="bi bi-coin me-2"></i>Thả đồng xu & Ước nguyện</span>
+                        </button>
+                        <div id="faucet-cooldown-timer" class="mt-3 text-muted" style="display: none;">
+                            Bạn có thể ước nguyện lại sau: <strong id="faucet-timer-display">...</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL ĐƯỢC THÊM TỪ DASHBOARD.HTML -->
+    <div class="modal fade" id="backupModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header bg-danger text-white"><h5 class="modal-title">🚨 CẢNH BÁO AN NINH</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body"><p><strong>Hãy sao chép và cất giữ KHÓA BÍ MẬT ở nơi an toàn. Nếu làm mất, bạn sẽ mất quyền truy cập vào ví vĩnh viễn.</strong></p><textarea id="modal-private-key" class="form-control" readonly style="height: 180px;"></textarea></div><div class="modal-footer"><span id="modal-copied-message" class="text-success me-auto" style="display:none;">Đã sao chép!</span><button type="button" class="btn btn-success" data-action="copy-and-close-modal">Sao chép & Đóng</button></div></div></div></div>
+
+    <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast" role="alert"><div class="toast-header"><strong class="me-auto" id="toast-title">Thông báo</strong><button type="button" class="btn-close" data-bs-dismiss="toast"></button></div><div class="toast-body" id="toast-body"></div></div></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/transaction.js"></script>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        let state = { userWallet: null, unlockedPrivateKey: null };
+        
+        // --- KHỞI TẠO CÁC BIẾN CHO MODAL VÀ TOAST ---
+        const appToast = new bootstrap.Toast(document.getElementById('appToast'));
+        const backupModalEl = document.getElementById('backupModal');
+        const backupModal = new bootstrap.Modal(backupModalEl);
+
+        const api = {
+            async request(endpoint, method = 'GET', body = null) {
+                try {
+                    const options = { method, headers: { 'Content-Type': 'application/json' } };
+                    if (body) options.body = JSON.stringify(body);
+                    const response = await fetch(endpoint, options);
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Lỗi không xác định.');
+                    return data;
+                } catch (error) {
+                    showToast(`Lỗi: ${error.message}`, 'Lỗi API');
+                    throw error;
+                }
+            }
+        };
+
+        function showToast(message, title = 'Thông báo') {
+            document.getElementById('toast-title').innerText = title;
+            document.getElementById('toast-body').innerText = message;
+            appToast.show();
+        }
+
+        function renderAll() {
+            renderWallet();
+            renderFaucet();
+        }
+
+        // --- HÀM RENDER WALLET ĐÃ ĐƯỢC NÂNG CẤP ---
+        function renderWallet() {
+            const container = document.getElementById('faucet-wallet-container');
+            if (state.userWallet) {
+                // Giữ nguyên giao diện khi đã đăng nhập
+                container.innerHTML = `<h5 class="text-success"><i class="bi bi-wallet-fill"></i> Ví đã Mở khóa</h5><p class="wallet-info">${state.userWallet.address}</p><button class="btn btn-sm btn-outline-danger mt-3" data-action="logout"><i class="bi bi-lock-fill"></i> Khóa Ví</button>`;
+            } else {
+                // Áp dụng giao diện mới từ dashboard.html khi chưa đăng nhập
+                container.innerHTML = `<h5><i class="bi bi-unlock-fill"></i> Mở khóa Ví</h5>
+                                       <p class="small text-muted">Dùng ví để tương tác.</p>
+                                       <button class="btn btn-sm btn-success w-100 mb-2" data-action="create-wallet">
+                                           <i class="bi bi-plus-lg"></i> Tạo Ví Mới
+                                       </button>
+                                       <div class="mb-2">
+                                           <label class="form-label small">Hoặc dán Private Key:</label>
+                                           <textarea class="form-control form-control-sm import-pk-pem" rows="4"></textarea>
+                                       </div>
+                                       <button class="btn btn-sm btn-primary w-100" data-action="import-wallet">
+                                           <i class="bi bi-key-fill"></i> Mở khóa
+                                       </button>`;
+            }
+        }
+        
+        let faucetCooldownInterval = null;
+        async function renderFaucet() {
+            const faucetCard = document.getElementById('faucet-main-card');
+            if (!state.userWallet) {
+                faucetCard.style.display = 'none';
+                return;
+            }
+            faucetCard.style.display = 'block';
+
+            const claimBtn = document.getElementById('claim-faucet-btn');
+            const timerDisplay = document.getElementById('faucet-cooldown-timer');
+            const timerText = document.getElementById('faucet-timer-display');
+
+            try {
+                const status = await api.request(`/api/v1/faucet/status/${state.userWallet.address}`);
+                document.getElementById('faucet-reward-amount').textContent = `${parseFloat(status.faucet_amount).toFixed(2)} SOK`;
+                
+                if (status.can_claim) {
+                    claimBtn.disabled = false;
+                    claimBtn.querySelector('.btn-text').textContent = 'Thả đồng xu & Ước nguyện';
+                    timerDisplay.style.display = 'none';
+                    if (faucetCooldownInterval) clearInterval(faucetCooldownInterval);
+                } else {
+                    claimBtn.disabled = true;
+                    timerDisplay.style.display = 'block';
+                    
+                    let secondsLeft = status.seconds_until_next_claim;
+                    
+                    const updateTimer = () => {
+                        if (secondsLeft <= 0) {
+                            clearInterval(faucetCooldownInterval);
+                            renderFaucet();
+                        } else {
+                            const h = Math.floor(secondsLeft / 3600).toString().padStart(2, '0');
+                            const m = Math.floor((secondsLeft % 3600) / 60).toString().padStart(2, '0');
+                            const s = (secondsLeft % 60).toString().padStart(2, '0');
+                            timerText.textContent = `${h}:${m}:${s}`;
+                            claimBtn.querySelector('.btn-text').textContent = `Vui lòng chờ...`;
+                            secondsLeft--;
+                        }
+                    };
+
+                    if (faucetCooldownInterval) clearInterval(faucetCooldownInterval);
+                    updateTimer();
+                    faucetCooldownInterval = setInterval(updateTimer, 1000);
+                }
+            } catch (e) {
+                claimBtn.disabled = true;
+                timerDisplay.textContent = "Lỗi khi kiểm tra trạng thái.";
+            }
+        }
+
+        // --- BỘ XỬ LÝ SỰ KIỆN ĐÃ ĐƯỢC HOÀN THIỆN ---
+        document.body.addEventListener('click', async (event) => {
+            const button = event.target.closest('button');
+            if (!button || !button.dataset.action) return;
+            const action = button.dataset.action;
+
+            switch(action) {
+                case 'create-wallet': {
+                    const data = await api.request('/api/create_wallet', 'POST');
+                    backupModalEl.dataset.walletInfo = JSON.stringify(data);
+                    document.getElementById('modal-private-key').value = data.private_key_pem;
+                    backupModal.show();
+                    break;
+                }
+                case 'copy-and-close-modal': {
+                    const pkTextarea = document.getElementById('modal-private-key');
+                    const copiedMessage = document.getElementById('modal-copied-message');
+                    navigator.clipboard.writeText(pkTextarea.value).then(() => {
+                        copiedMessage.style.display = 'inline';
+                        setTimeout(() => {
+                            const walletData = JSON.parse(backupModalEl.dataset.walletInfo || '{}');
+                            state.userWallet = { address: walletData.address };
+                            state.unlockedPrivateKey = walletData.private_key_pem;
+                            backupModal.hide();
+                            renderAll();
+                            showToast("Đã tạo ví và sao chép Private Key!", "Thành công");
+                        }, 1000);
+                    }).catch(err => showToast('Lỗi sao chép, vui lòng sao chép thủ công.', 'Lỗi'));
+                    break;
+                }
+                case 'import-wallet': {
+                    // Sử dụng class selector để tìm đúng textarea
+                    const pkPem = button.parentElement.querySelector('.import-pk-pem').value.trim();
+                    if (!pkPem) return showToast("Vui lòng nhập Private Key.", "Cảnh báo");
+                    try {
+                        const walletData = await api.request('/api/wallet_from_pk', 'POST', { private_key_pem: pkPem });
+                        state.userWallet = { address: walletData.address };
+                        state.unlockedPrivateKey = pkPem;
+                        renderAll();
+                        showToast("Ví đã được mở khóa!", "Thành công");
+                    } catch (e) {}
+                    break;
+                }
+                case 'logout': {
+                    state = { userWallet: null, unlockedPrivateKey: null };
+                    if (faucetCooldownInterval) clearInterval(faucetCooldownInterval); // Dừng timer khi logout
+                    renderAll();
+                    break;
+                }
+                case 'claim-faucet': {
+                    const spinner = button.querySelector('.spinner-border');
+                    const btnText = button.querySelector('.btn-text');
+                    
+                    button.disabled = true;
+                    spinner.style.display = 'inline-block';
+                    btnText.style.display = 'none';
+
+                    try {
+                        const result = await api.request('/api/v1/faucet/claim', 'POST', { address: state.userWallet.address });
+                        showToast(result.message, "Thành công!");
+                        setTimeout(() => {
+                            showToast("Số dư của bạn sẽ được cập nhật sau ít phút.", "Thông báo");
+                        }, 3000);
+                    } catch(e) {
+                        // Lỗi đã được hiển thị
+                    } finally {
+                        spinner.style.display = 'none';
+                        btnText.style.display = 'inline-block';
+                        renderFaucet(); // Luôn render lại để cập nhật trạng thái
+                    }
+                    break;
+                }
+            }
+        });
+
+        function initialize() {
+            renderAll();
+        }
+        initialize();
+    });
+    </script>
+</body>
+</html>

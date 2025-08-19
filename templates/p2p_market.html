@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chợ Giao Dịch SOK - P2P</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .container { max-width: 960px; }
+        .card-title { color: #0d6efd; }
+        .table-hover tbody tr:hover {
+            background-color: #e9ecef;
+            cursor: pointer;
+        }
+        .text-monospace { font-family: monospace; }
+        .status-open { color: #198754; font-weight: bold; }
+        .status-pending { color: #ffc107; font-weight: bold; }
+        .status-completed { color: #6c757d; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container my-4">
+        <div class="text-center mb-4">
+            <h1 class="display-5">🛒 Chợ Giao Dịch P2P SOK</h1>
+            <p class="lead">Nơi mua bán SOK an toàn và minh bạch giữa các thành viên.</p>
+        </div>
+
+        <!-- Khu vực quản lý ví (giả lập) -->
+        <div class="card mb-4">
+             <div class="card-body">
+                <h5 class="card-title">Ví Của Bạn</h5>
+                <div class="mb-3">
+                    <label for="privateKeyInput" class="form-label">Private Key PEM:</label>
+                    <textarea class="form-control" id="privateKeyInput" rows="3" placeholder="Dán Private Key của bạn vào đây để thực hiện giao dịch"></textarea>
+                </div>
+                 <button class="btn btn-primary" onclick="loadMyWallet()">Nạp Ví</button>
+                 <div id="walletInfo" class="mt-3" style="display:none;">
+                     <strong>Địa chỉ ví:</strong> <span id="walletAddress" class="text-monospace"></span><br>
+                     <strong>Số dư:</strong> <span id="walletBalance"></span> SOK
+                 </div>
+            </div>
+        </div>
+
+        <!-- Khu vực tạo lệnh -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Tạo Lệnh Bán Mới</h5>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="sokAmount" class="form-label">Số lượng SOK muốn bán</label>
+                        <input type="number" class="form-control" id="sokAmount" placeholder="Ví dụ: 1000">
+                    </div>
+                    <div class="col-md-8">
+                        <label for="fiatDetails" class="form-label">Thông tin nhận tiền (VNĐ)</label>
+                        <input type="text" class="form-control" id="fiatDetails" placeholder="Ví dụ: 250,000 VND - VCB 0123456789 - NGUYEN VAN A">
+                    </div>
+                </div>
+                <button class="btn btn-success mt-3" onclick="createSellOrder()">Tạo Lệnh Bán</button>
+            </div>
+        </div>
+
+        <!-- Danh sách lệnh đang mở -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Các Lệnh Đang Mở Bán</h5>
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Người Bán</th>
+                            <th>Số Lượng (SOK)</th>
+                            <th>Thông Tin Thanh Toán</th>
+                            <th>Hành Động</th>
+                        </tr>
+                    </thead>
+                    <tbody id="open-orders-table">
+                        <!-- Dữ liệu được nạp bằng JS -->
+                    </tbody>
+                </table>
+                 <div class="text-center">
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadOpenOrders()">Làm mới danh sách</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+// Khai báo biến toàn cục để lưu thông tin ví
+let userWallet = {
+    privateKey: null,
+    address: null,
+    balance: 0
+};
+
+// Hàm tiện ích để gọi API
+async function apiCall(endpoint, method = 'GET', body = null) {
+    const options = {
+        method,
+        headers: { 'Content-Type': 'application/json' }
+    };
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(endpoint, options);
+    if (!response.ok) {
+        const errorData = await response.json();
+        alert(`Lỗi: ${errorData.error || 'Có lỗi xảy ra'}`);
+        throw new Error(errorData.error);
+    }
+    return response.json();
+}
+
+// Nạp thông tin ví từ Private Key
+async function loadMyWallet() {
+    const pk_pem = document.getElementById('privateKeyInput').value;
+    if (!pk_pem) {
+        alert('Vui lòng nhập Private Key.');
+        return;
+    }
+    try {
+        // Lấy địa chỉ ví từ key (Giả định server chính có API này)
+        const walletData = await apiCall('http://127.0.0.1:9000/api/wallet_from_pk', 'POST', { private_key_pem: pk_pem });
+        userWallet.privateKey = pk_pem;
+        userWallet.address = walletData.address;
+        
+        // Lấy số dư (Giả định server chính có API này)
+        const balanceData = await apiCall(`http://127.0.0.1:9000/api/get_balance/${userWallet.address}`);
+        userWallet.balance = balanceData.balance;
+
+        // Hiển thị thông tin
+        document.getElementById('walletAddress').innerText = userWallet.address;
+        document.getElementById('walletBalance').innerText = userWallet.balance;
+        document.getElementById('walletInfo').style.display = 'block';
+
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+// Nạp danh sách các lệnh đang mở
+async function loadOpenOrders() {
+    const tableBody = document.getElementById('open-orders-table');
+    tableBody.innerHTML = '<tr><td colspan="4" class="text-center">Đang tải dữ liệu...</td></tr>';
+    try {
+        const orders = await apiCall('/api/v1/p2p/orders/list');
+        tableBody.innerHTML = '';
+        if (orders.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="4" class="text-center">Chưa có lệnh bán nào.</td></tr>';
+            return;
+        }
+        orders.forEach(order => {
+            const row = `
+                <tr>
+                    <td class="text-monospace">${order.seller_address.substring(0, 12)}...</td>
+                    <td>${order.sok_amount}</td>
+                    <td>${order.fiat_details}</td>
+                    <td><button class="btn btn-success btn-sm" onclick="acceptOrder('${order.id}')">Mua</button></td>
+                </tr>
+            `;
+            tableBody.innerHTML += row;
+        });
+    } catch (error) {
+        tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger">Không thể tải được dữ liệu.</td></tr>';
+        console.error(error);
+    }
+}
+
+
+// Chấp nhận một lệnh mua
+async function acceptOrder(orderId) {
+    if (!userWallet.address) {
+        alert('Vui lòng nạp ví của bạn trước khi thực hiện giao dịch!');
+        return;
+    }
+    
+    const isConfirmed = confirm('Bạn có chắc chắn muốn mua SOK từ lệnh này không? Hành động này sẽ thông báo cho người bán.');
+    if (isConfirmed) {
+        try {
+            const result = await apiCall(`/api/v1/p2p/orders/${orderId}/accept`, 'POST', { buyer_address: userWallet.address });
+            alert(result.message);
+            // Có thể thêm logic để quản lý các lệnh đang chờ thanh toán
+        } catch (error) {
+            console.error(error);
+        }
+    }
+}
+
+// Worker tạo lệnh bán
+async function createSellOrder() {
+    // Luồng này phức tạp hơn, yêu cầu người dùng phải gửi SOK vào ví ký quỹ trước.
+    // Tạm thời để dưới dạng thông báo.
+    alert('Chức năng "Tạo Lệnh Bán" cần một quy trình phức tạp hơn (ký quỹ SOK trước).\nĐây là tính năng sẽ được phát triển trong các phiên bản sau.');
+}
+
+
+// Tự động nạp danh sách khi trang được tải
+document.addEventListener('DOMContentLoaded', loadOpenOrders);
+</script>
+
+</body>
+</html>
