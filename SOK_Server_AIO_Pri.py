@@ -41,7 +41,7 @@ P2P_PAYMENT_WINDOW_SECONDS = 1800
 P2P_FEE_PERCENT = Decimal('0.5'); PRICE_PER_100_VIEWS = Decimal('1.0'); PLATFORM_FEE_PERCENT = Decimal('20.0'); PRICE_PER_VIEW = PRICE_PER_100_VIEWS / 100; REWARD_AMOUNT = PRICE_PER_VIEW * (1 - PLATFORM_FEE_PERCENT / 100)
 ECON_DATA_FILE = "sok_econ_data_v10.json"; ECON_CHART_FILE = os.path.join("static", "sok_valuation_chart.html"); ECON_ANALYSIS_INTERVAL = 300; ECON_INITIAL_TREASURY_USD = Decimal('10000.0'); ECON_INITIAL_TOTAL_SUPPLY = Decimal('100000000.0')
 ECON_W_TX_GROWTH = Decimal('0.5'); ECON_W_WORKER_GROWTH = Decimal('0.3'); ECON_W_WEBSITE_GROWTH = Decimal('0.2')
-PAYMENT_COOLDOWN_SECONDS = 180; WORKER_TIMEOUT_SECONDS = 180; NODE_HEALTH_CHECK_TIMEOUT = 5; MINIMUM_FUNDING_AMOUNT = PRICE_PER_100_VIEWS / 2; SAVE_STATE_INTERVAL = 300
+PAYMENT_COOLDOWN_SECONDS = 180; WORKER_TIMEOUT_SECONDS = 180; NODE_HEALTH_CHECK_TIMEOUT = 10; MINIMUM_FUNDING_AMOUNT = PRICE_PER_100_VIEWS / 2; SAVE_STATE_INTERVAL = 300
 LIVE_NETWORK_CONFIG_FILE = "live_network_nodes.json"; BOOTSTRAP_CONFIG_FILE = "bootstrap_config.json"; MINER_LOCK_PORT = 19999
 PHANTOM_PROBE_AMOUNT = Decimal('0.000000123')
 PHANTOM_CYCLE_INTERVAL = 120
@@ -63,7 +63,7 @@ def load_config_from_github(filename: str) -> Optional[Dict]:
     url = GITHUB_CONFIG_BASE_URL + filename
     logging.info(f"CONFIG: Đang tải file cấu hình từ GitHub: {url}")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=20)
         response.raise_for_status()
         config_data = response.json()
         logging.info(f"CONFIG: Tải thành công '{filename}' từ GitHub.")
@@ -165,6 +165,8 @@ class PrimeAgentLogic:
         else:
             logging.warning("⚠️ Gemini API Key chưa được cấu hình. Chat AI sẽ ở chế độ local.")
         self.local_ai_bot = LocalSmartBot(self)
+        self.last_website_add_times: Dict[str, float] = {}
+        self.last_p2p_create_times: Dict[str, float] = {}
 
     def _initialize_wallet(self, filename: str, wallet_name: str) -> Wallet:
         encrypted_filename = filename.replace('.pem', '.enc')
@@ -244,7 +246,7 @@ class PrimeAgentLogic:
             challenge_payload = {'nonce': nonce, 'hmac': hmac_sig}
             challenge_resp = requests.post(
                 f"{peer_endpoint}/api/internal/v1/handshake/challenge",
-                json=challenge_payload, timeout=5
+                json=challenge_payload, timeout=10
             )
             if challenge_resp.status_code != 200:
                 logging.error(f"HANDSHAKE_FAIL: Peer {peer_endpoint} từ chối challenge: {challenge_resp.text}")
@@ -255,7 +257,7 @@ class PrimeAgentLogic:
             }
             response_resp = requests.post(
                 f"{peer_endpoint}/api/internal/v1/handshake/response",
-                json=response_payload, timeout=5
+                json=response_payload, timeout=10
             )
             if response_resp.status_code != 200:
                 logging.error(f"HANDSHAKE_FAIL: Peer {peer_endpoint} không phản hồi thông tin: {response_resp.text}")
@@ -297,7 +299,7 @@ class PrimeAgentLogic:
         logging.info(" FEDERATION_SYNC_LOOP: Luồng đồng bộ hóa liên-prime đã bắt đầu.")
         while self.is_running.is_set():
             try:
-                event = self.federation_event_queue.get(timeout=5)
+                event = self.federation_event_queue.get(timeout=10)
                 endpoint = event["endpoint"]
                 data = event["data"]
                 signed_message = self._sign_internal_payload(data)
@@ -312,7 +314,7 @@ class PrimeAgentLogic:
                     try:
                         threading.Thread(
                             target=requests.post,
-                            kwargs={'url': target_url, 'json': signed_message, 'timeout': 5}
+                            kwargs={'url': target_url, 'json': signed_message, 'timeout': 10}
                         ).start()
                         logging.info(f"SYNC_SENT: Đã gửi bản tin '{data.get('action')}' đến {peer_info.get('address', 'N/A')[:15]}")
                     except Exception as e:
@@ -336,7 +338,7 @@ class PrimeAgentLogic:
             time.sleep(90)
             if not self.is_running.is_set(): return
             
-            response = requests.get(f"{node_to_use}/balance/{address}", timeout=10)
+            response = requests.get(f"{node_to_use}/balance/{address}", timeout=20)
             if response.status_code == 200:
                 balance = response.json().get("balance", "0")
                 balance_str = f"{Decimal(balance):.8f}"
@@ -419,7 +421,7 @@ class PrimeAgentLogic:
             if status['status'] == 'stopped': return {"error": "Tiến trình khai thác không đang chạy."}, 409
             if self.miner_process and self.miner_process.poll() is None:
                 try:
-                    pid = self.miner_process.pid; self.miner_process.terminate(); self.miner_process.wait(timeout=5)
+                    pid = self.miner_process.pid; self.miner_process.terminate(); self.miner_process.wait(timeout=15)
                     logging.info(f"MINER_CONTROL: Đã dừng tiến trình khai thác PID: {pid}"); self.miner_process = None
                     return {"message": "Đã dừng tiến trình khai thác."}, 200
                 except subprocess.TimeoutExpired:
@@ -479,7 +481,7 @@ class PrimeAgentLogic:
                 live_nodes = []
                 for node_url in known_nodes_list:
                     try:
-                        if requests.get(f'{node_url}/ping', timeout=3).status_code == 200: live_nodes.append(node_url)
+                        if requests.get(f'{node_url}/ping', timeout=6).status_code == 200: live_nodes.append(node_url)
                     except requests.RequestException: pass
                 if not live_nodes:
                     time.sleep(PHANTOM_CYCLE_INTERVAL); continue
@@ -488,7 +490,7 @@ class PrimeAgentLogic:
                     tx = Transaction(self.wallet.get_public_key_pem(), treasury_address, float(PHANTOM_PROBE_AMOUNT), sender_address=treasury_address); tx.sign(self.wallet.private_key)
                 tx_dict = tx.to_dict()
                 for target_node_url in live_nodes:
-                    try: requests.post(f"{target_node_url}/transactions/new", json=tx_dict, timeout=10)
+                    try: requests.post(f"{target_node_url}/transactions/new", json=tx_dict, timeout=20)
                     except requests.RequestException: pass
             except Exception as e: logging.error(f"👻 Phantom Agent: Lỗi không xác định trong chu kỳ. Lỗi: {e}", exc_info=True)
             
@@ -563,7 +565,7 @@ class PrimeAgentLogic:
                 if time.time() - last_paid < PAYMENT_COOLDOWN_SECONDS: continue
                 if not node: self.reward_queue.put(worker_address); time.sleep(10); continue
                 tx = Transaction(self.wallet.get_public_key_pem(), worker_address, float(REWARD_AMOUNT), sender_address=self.wallet.get_address()); tx.sign(self.wallet.private_key)
-                response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=10)
+                response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=20)
                 if response.status_code == 201: logging.info(f"🚀 Giao dịch trả thưởng {float(REWARD_AMOUNT):.8f} SOK cho {worker_address[:10]}..."); self.last_reward_times[worker_address] = time.time()
                 else: self.reward_queue.put(worker_address); time.sleep(5)
             except Empty: continue
@@ -590,7 +592,7 @@ class PrimeAgentLogic:
                 if not node:
                     time.sleep(30); continue
                 
-                response = requests.get(f"{node}/chain", timeout=10)
+                response = requests.get(f"{node}/chain", timeout=20)
                 if response.status_code != 200: 
                     time.sleep(60); continue
                 chain = response.json().get('chain', [])
@@ -640,7 +642,7 @@ class PrimeAgentLogic:
         balance = "0"; node_to_use = self.current_best_node
         if not node_to_use: return {"error": "Không thể kết nối blockchain để lấy số dư"}
         try:
-            response = requests.get(f"{node_to_use}/balance/{address}", timeout=3)
+            response = requests.get(f"{node_to_use}/balance/{address}", timeout=6)
             if response.status_code == 200: balance = response.json().get("balance", "0")
         except: pass
         with self.state_lock:
@@ -674,7 +676,7 @@ class PrimeAgentLogic:
                 amount_to_return = float(order['sok_amount'])
                 try:
                     tx = Transaction(self.wallet.get_public_key_pem(), seller_address, amount_to_return, sender_address=self.wallet.get_address()); tx.sign(self.wallet.private_key)
-                    response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=10)
+                    response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=20)
                     if response.status_code != 201: return {"error": "Lỗi khi hoàn trả SOK ký quỹ."}, 500
                 except Exception as e: return {"error": f"Lỗi hệ thống khi hoàn trả SOK: {e}"}, 500
             self.p2p_orders[order_id]['status'] = 'CANCELLED'
@@ -695,7 +697,7 @@ class PrimeAgentLogic:
             amount_to_send = order['sok_amount']; fee = amount_to_send * (P2P_FEE_PERCENT / 100); final_amount = float(amount_to_send - fee)
             try:
                 tx = Transaction(self.wallet.get_public_key_pem(), order['buyer_address'], final_amount, sender_address=self.wallet.get_address()); tx.sign(self.wallet.private_key)
-                response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=10)
+                response = requests.post(f"{node}/transactions/new", json=tx.to_dict(), timeout=20)
                 if response.status_code != 201: return {"error": "Lỗi gửi giao dịch."}, 500
             except Exception as e: return {"error": f"Lỗi hệ thống: {e}"}, 500
             self.p2p_orders[order_id]['status'] = 'COMPLETED'
@@ -721,11 +723,34 @@ class PrimeAgentLogic:
         return False
 
     def p2p_create_order(self, seller_address, sok_amount_str, fiat_details):
-        try: sok_amount = Decimal(sok_amount_str)
-        except: return {"error": "Số SOK không hợp lệ"}, 400
-        if sok_amount <= 0: return {"error": "Số SOK phải lớn hơn 0"}, 400
-        order_id = str(uuid.uuid4()); new_order = {"id": order_id, "seller_address": seller_address, "sok_amount": sok_amount, "fiat_details": fiat_details, "status": "AWAITING_DEPOSIT", "buyer_address": None, "created_at": time.time()}
-        with self.state_lock: self.p2p_orders[order_id] = new_order
+        try:
+            sok_amount = Decimal(sok_amount_str)
+        except:
+            return {"error": "Số SOK không hợp lệ"}, 400
+        if sok_amount <= 0:
+            return {"error": "Số SOK phải lớn hơn 0"}, 400
+
+        with self.state_lock:
+            # Kiểm tra thời gian chờ 3 phút
+            last_create_time = self.last_p2p_create_times.get(seller_address, 0)
+            if time.time() - last_create_time < 180:  # 3 phút = 180 giây
+                remaining_time = 180 - int(time.time() - last_create_time)
+                return {"error": f"Bạn cần đợi {remaining_time} giây nữa để tạo lệnh bán mới."}, 429 # HTTP 429 Too Many Requests
+
+            order_id = str(uuid.uuid4())
+            new_order = {
+                "id": order_id,
+                "seller_address": seller_address,
+                "sok_amount": sok_amount,
+                "fiat_details": fiat_details,
+                "status": "AWAITING_DEPOSIT",
+                "buyer_address": None,
+                "created_at": time.time()
+            }
+            self.p2p_orders[order_id] = new_order
+            # Cập nhật thời gian tạo lệnh thành công
+            self.last_p2p_create_times[seller_address] = time.time()
+
         return {"message": "Tạo lệnh thành công.", "order": new_order, "escrow_address": self.wallet.get_address()}, 201
 
     def _econ_load_data(self):
@@ -761,7 +786,7 @@ class PrimeAgentLogic:
         blockchain_height = 0
         if node:
             try:
-                res = requests.get(f"{node}/chain", timeout=5);
+                res = requests.get(f"{node}/chain", timeout=15);
                 if res.ok: blockchain_height = res.json().get("length", 0)
             except: pass
         with self.state_lock: total_p2p_escrow = sum(o['sok_amount'] for o in self.p2p_orders.values() if o['status'] == 'OPEN')
@@ -859,7 +884,7 @@ def get_dashboard_stats():
     chain_height = -1; node_to_use = core_logic.current_best_node
     if node_to_use:
         try:
-            response = requests.get(f"{node_to_use}/chain", timeout=3)
+            response = requests.get(f"{node_to_use}/chain", timeout=6)
             if response.status_code == 200: chain_height = response.json().get('length', 0)
         except: pass 
     return jsonify({"active_workers": active_workers, "total_websites": total_websites, "views_completed_session": views_completed, "blockchain_height": chain_height, "status": "Online" if core_logic.current_best_node else "Connecting...", "open_p2p_orders": open_p2p_orders})
@@ -879,7 +904,7 @@ def get_wallet_from_pk():
 def get_balance_api(address):
     node_to_use = core_logic.current_best_node
     if not node_to_use: return jsonify({"error": "Không có node blockchain nào hoạt động."}), 503
-    try: response = requests.get(f"{node_to_use}/balance/{address}", timeout=5); response.raise_for_status(); return jsonify(response.json())
+    try: response = requests.get(f"{node_to_use}/balance/{address}", timeout=15); response.raise_for_status(); return jsonify(response.json())
     except requests.exceptions.RequestException: return jsonify({"error": "Không thể kết nối đến node blockchain"}), 503
 
 @app.route('/api/direct_fund', methods=['POST'])
@@ -889,10 +914,10 @@ def direct_fund_api():
     try:
         sender_wallet = Wallet(private_key_pem=pk_pem); sender_address = sender_wallet.get_address(); amount = float(amount_str); node_to_use = core_logic.current_best_node
         if not node_to_use: return jsonify({"error": "Không có node blockchain nào hoạt động."}), 503
-        balance_resp = requests.get(f"{node_to_use}/balance/{sender_address}", timeout=5)
+        balance_resp = requests.get(f"{node_to_use}/balance/{sender_address}", timeout=15)
         if balance_resp.json().get('balance', 0) < amount: return jsonify({"error": "Số dư không đủ."}), 402
         tx = Transaction(sender_wallet.get_public_key_pem(), recipient, amount, sender_address=sender_address); tx.sign(sender_wallet.private_key)
-        broadcast_resp = requests.post(f"{node_to_use}/transactions/new", json=tx.to_dict(), timeout=10); broadcast_resp.raise_for_status()
+        broadcast_resp = requests.post(f"{node_to_use}/transactions/new", json=tx.to_dict(), timeout=20); broadcast_resp.raise_for_status()
         return jsonify({"message": f"Đã gửi thành công {amount} SOK!"}), 201
     except Exception: return jsonify({"error": "Lỗi server khi xử lý giao dịch."}), 500
 
@@ -910,7 +935,14 @@ def add_website():
     if not (new_url.startswith('http://') or new_url.startswith('https://')): new_url = 'https://' + new_url
     try: owner_address = get_address_from_public_key_pem(owner_pk_pem)
     except Exception: return jsonify({"error": "Public Key không hợp lệ."}), 400
+    
     with core_logic.state_lock:
+        # Kiểm tra thời gian chờ 3 phút
+        last_add_time = core_logic.last_website_add_times.get(owner_address, 0)
+        if time.time() - last_add_time < 180:  # 3 phút = 180 giây
+            remaining_time = 180 - int(time.time() - last_add_time)
+            return jsonify({"error": f"Bạn cần đợi {remaining_time} giây nữa để thêm website mới."}), 429 # HTTP 429 Too Many Requests
+
         if any(w_url == new_url for w_url in core_logic.websites_db): return jsonify({"error": "Website đã tồn tại."}), 409
         
         website_data = {"owner": owner_address, "views_funded": Decimal('0'), "views_completed": Decimal('0')}
@@ -924,6 +956,9 @@ def add_website():
             message = f"Thêm website thành công! Đã tự động áp dụng {pending_amount} SOK từ quỹ chờ của bạn."
             logging.info(f"✅ QUỸ CHỜ: Đã áp dụng {pending_amount} SOK cho website mới {new_url} của {owner_address[:10]}")
     
+        # Cập nhật thời gian thêm website thành công
+        core_logic.last_website_add_times[owner_address] = time.time()
+
     sync_data = {'action': 'add', 'url': new_url, 'data': {k: str(v) for k, v in website_data.items()}}
     core_logic.broadcast_to_peers('/api/internal/v1/sync/website', sync_data)
             
@@ -1039,7 +1074,7 @@ def get_transaction_history_api(address):
     node_to_use = core_logic.current_best_node
     if not node_to_use: return jsonify({"error": "Không có node blockchain nào đang hoạt động để truy vấn."}), 503
     try:
-        response = requests.get(f"{node_to_use}/chain", timeout=15); response.raise_for_status()
+        response = requests.get(f"{node_to_use}/chain", timeout=25); response.raise_for_status()
         chain_data = response.json().get('chain', [])
         history = []; user_address_lower = address.lower()
         for block in chain_data:
@@ -1067,8 +1102,8 @@ def get_explorer_data():
     node_to_use = core_logic.current_best_node
     if not node_to_use: return jsonify({"error": "Không thể kết nối đến node."}), 503
     try:
-        chain_len_resp = requests.get(f"{node_to_use}/chain", timeout=3).json(); start_block = max(0, chain_len_resp.get('length', 0) - 50)
-        chain_resp = requests.get(f'{node_to_use}/chain?start={start_block}', timeout=10)
+        chain_len_resp = requests.get(f"{node_to_use}/chain", timeout=6).json(); start_block = max(0, chain_len_resp.get('length', 0) - 50)
+        chain_resp = requests.get(f'{node_to_use}/chain?start={start_block}', timeout=20)
         if chain_resp.status_code == 200:
             chain_data = chain_resp.json().get('chain', [])
             for block in chain_data:
